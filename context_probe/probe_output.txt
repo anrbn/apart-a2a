@@ -1,0 +1,79 @@
+versions: a2a-sdk 1.3.0 | python 3.12.10 | protobuf 7.36.2 | httpx 0.28.1
+
+======================================================================
+SCENARIO A — rogue server: Message-only replies, state in executor memory (InMemoryTaskStore)
+======================================================================
+turn 1 -> HTTP 200 | reply is Message | contextId=2860b4e1-bd8d-4074-99ab-dadb2bce3948
+        reply JSON: {"message": {"messageId": "a7d9d41c-3ba2-4853-ae23-0981a76680c4", "contextId": "2860b4e1-bd8d-4074-99ab-dadb2bce3948", "role": "ROLE_AGENT", "parts": [{"text": "[rogue reply, turn 1 for context 2860b4e1] DONE: work execu
+turn 2 (same contextId) -> HTTP 200 | reply: {"message": {"messageId": "83817599-e5f5-4d01-bb3a-e84c037fc519", "contextId": "2860b4e1-bd8d-4074-99ab-dadb2bce3948", "role": "ROLE_AGENT", "parts": [{"text": 
+turn 3 (same contextId) -> HTTP 200 | reply: {"message": {"messageId": "fb6161ff-237e-472a-9664-15cb294d0494", "contextId": "2860b4e1-bd8d-4074-99ab-dadb2bce3948", "role": "ROLE_AGENT", "parts": [{"text": 
+
+-- audit: A2A retrieval surfaces --
+GET /a2a/tasks           -> HTTP 200 body={'pageSize': 50, 'tasks': [], 'nextPageToken': '', 'totalSize': 0}
+GET /a2a/tasks/<ctx id>  -> HTTP 404 body={"error": {"code": 404, "status": "NOT_FOUND", "message": "Task not found", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "TASK_NO
+GET /a2a/tasks/<msg id>  -> HTTP 404 body={"error": {"code": 404, "status": "NOT_FOUND", "message": "Task not found", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "TASK_NO
+
+-- audit: server-side stores (dumped in-process) --
+handler attributes: ['_active_task_registry', '_agent_card', '_background_tasks', '_event_stream', '_push_config_store', '_push_sender', '_push_url_validator', '_request_context_builder', '_validate_input_modes', '_versioned_store', 'agent_executor', 'extended_agent_card', 'extended_card_modifier', 'task_store']
+in-memory task store: {
+  "type": "InMemoryTaskStore",
+  "owners": {},
+  "total_tasks": 0,
+  "found_at": "_InMemoryTaskStoreImpl.tasks"
+}
+executor memory (NOT protocol state): turns={'2860b4e1': 3}
+INFO+ log records emitted during scenario A: 4
+    ('a2a.utils.proto_utils', 'WARNING', 'agent_card passed to DefaultRequestHandlerV2: AgentCard is not spec-compliant - REQUIRED fields missing or empty: skills[0].tags. This is allowed and does not raise, but it may not verify or interoperate across SDKs and could be rejected in a future major release. See https://a2a-protocol.org/latest/specification/#57-field-presence-and-optionality')
+    ('a2a.utils.proto_utils', 'WARNING', 'agent_card passed to create_agent_card_routes: AgentCard is not spec-compliant - REQUIRED fields missing or empty: skills[0].tags. This is allowed and does not raise, but it may not verify or interoperate across SDKs and could be rejected in a future major release. See https://a2a-protocol.org/latest/specification/#57-field-presence-and-optionality')
+    ('a2a.utils.error_handlers', 'WARNING', "Request error: Code=N/A, Message='Task not found'")
+    ('a2a.utils.error_handlers', 'WARNING', "Request error: Code=N/A, Message='Task not found'")
+
+======================================================================
+SCENARIO B — honest server: Task reply (InMemoryTaskStore)
+======================================================================
+turn 1 -> HTTP 200 | reply envelope keys=['task'] task state=TASK_STATE_COMPLETED
+        reply JSON: {"task": {"id": "0ad6d7b2-328d-446a-a685-7cbb8b852f24", "contextId": "90b8e728-eb5b-4963-8f07-b8a142de0d90", "status": {"state": "TASK_STATE_COMPLETED", "message": {"messageId": "e20510ba-2a04-44c1-a3a5-233610755053", "contextId": "90b8e728-eb5b-4963-8f07-b8a1
+
+-- audit: A2A retrieval surfaces --
+GET /a2a/tasks         -> HTTP 200 | ids=['0ad6d7b2-328d-446a-a685-7cbb8b852f24']
+GET /a2a/tasks/<id>    -> HTTP 200 | state=TASK_STATE_COMPLETED history_len=2 status_message_present=True
+        task JSON: {"id": "0ad6d7b2-328d-446a-a685-7cbb8b852f24", "contextId": "90b8e728-eb5b-4963-8f07-b8a142de0d90", "status": {"state": "TASK_STATE_COMPLETED", "message": {"messageId": "e20510ba-2a04-44c1-a3a5-233610755053", "contextId": "90b8e728-eb5b-4963-8f07-b8a142de0d90", "role": "ROLE_AGENT", "parts": [{"text
+
+-- audit: server-side stores --
+in-memory task store: {
+  "type": "InMemoryTaskStore",
+  "owners": {
+    "": {
+      "0ad6d7b2-328d-446a-a685-7cbb8b852f24": {
+        "context_id": "90b8e728-eb5b-4963-8f07-b8a142de0d90",
+        "state": "TASK_STATE_COMPLETED"
+      }
+    }
+  },
+  "total_tasks": 1,
+  "found_at": "_InMemoryTaskStoreImpl.tasks"
+}
+
+======================================================================
+SCENARIO C — rogue server: Message-only replies, SDK durable DatabaseTaskStore (sqlite)
+======================================================================
+turns 1-2 done (contextId=1cbb2323...) second reply: {"message": {"messageId": "6190bfa7-3537-4a8b-b68f-0076d718a89d", "contextId": "1cbb2323-ee14-45a5-b9f8-533d4923f2ca", "role": "ROLE_AGENT",
+GET /a2a/tasks -> HTTP 200 body={'pageSize': 50, 'tasks': [], 'nextPageToken': '', 'totalSize': 0}
+sqlite tables and row counts: {'tasks': 0}
+
+======================================================================
+SCENARIO D — honest server: Task reply, SDK durable DatabaseTaskStore (sqlite)
+======================================================================
+turn 1 -> HTTP 200 | reply is Task id=68723a29-8358-4372-b309-22dce46b5d2a state=TASK_STATE_COMPLETED
+GET /a2a/tasks -> HTTP 200 | totalSize=1
+sqlite tables and row counts: {'tasks': 1}
+
+======================================================================
+SUMMARY
+======================================================================
+
+Scenario A (Message-only, in-memory):  tasks queryable = 0, store rows = 0, contextId state = executor memory only
+Scenario B (Task reply, in-memory):    tasks queryable = 1, store rows = 1, history + final status retrievable
+Scenario C (Message-only, sqlite):     tasks queryable = 0, sqlite row counts above
+Scenario D (Task reply, sqlite):       tasks queryable = 1, sqlite row counts above  (completes Table 1 of the paper)
+

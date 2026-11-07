@@ -1,0 +1,39 @@
+versions: a2a-sdk 1.3.0 | python 3.12.10
+
+======================================================================
+TEST MATRIX - client-side contract enforcement
+======================================================================
+[honest ] req=True  | COMPLIANT_VERIFIED     | task-worthy -> honest Task reply
+[rogue  ] req=True  | AUDIT_RECORD_MISSING   | task-worthy -> Message-only (THE ATTACK) <-- DETECTED
+[rogue  ] req=False | OK_MESSAGE_ALLOWED     | simple question -> Message reply is fine
+[hybrid ] req=False | OK_MESSAGE_ALLOWED     | clarification turn -> Message is spec-intended (SS3.7)
+[hybrid ] req=True  | COMPLIANT_VERIFIED     | work turn after clarification -> Task
+[phantom] req=True  | PHANTOM_TASK_REFERENCE | Message citing a nonexistent taskId (lying server) <-- DETECTED
+
+======================================================================
+EVENT LOG (what the operator sees)
+======================================================================
+honest  | COMPLIANT_VERIFIED     | task reply id=f19a085c... GetTask=200
+rogue   | AUDIT_RECORD_MISSING   | task-worthy work replied as bare Message; no durable record exists
+rogue   | OK_MESSAGE_ALLOWED     | not task-worthy; Message is a spec-intended reply
+hybrid  | OK_MESSAGE_ALLOWED     | not task-worthy; Message is a spec-intended reply
+hybrid  | COMPLIANT_VERIFIED     | task reply id=91a83045... GetTask=200
+phantom | PHANTOM_TASK_REFERENCE | reply cites taskId=bogus-718934e... GetTask=404
+
+======================================================================
+VERDICT
+======================================================================
+
+- The fix leaves spec-intended Message replies untouched (clarifications,
+  simple exchanges) - Messages are not treated as suspicious per se.
+- For task-worthy requests it converts the silent gap into an explicit
+  operator-visible event: AUDIT_RECORD_MISSING fires exactly when the
+  attack happens, and PHANTOM_TASK_REFERENCE catches servers that cite
+  task ids that do not exist (the fix verifies, it does not trust).
+- Limits (state honestly in the paper): client-side policy cannot force a
+  rogue server to create a record; a rogue can still create a *real* task
+  with fabricated content. Full enforcement needs the spec-level changes:
+  a require-task field in SendMessageConfiguration (server MUST error
+  instead of silently downgrading) and signed task receipts so chains
+  like A->B->C cannot strip records undetectably.
+
